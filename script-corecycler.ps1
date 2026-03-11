@@ -2,7 +2,7 @@
 .AUTHOR
     sp00n
 .VERSION
-    0.11.0.3
+    0.11.0.4
 .DESCRIPTION
     Sets the affinity of the selected stress test program process to only one
     core and cycles through all the cores which allows to test the stability of
@@ -23,7 +23,7 @@ param(
 
 
 # Our current version
-$version = '0.11.0.3'
+$version = '0.11.0.4'
 
 
 # This defines the strict mode
@@ -167,6 +167,7 @@ $setVoltageOnlyForTestedCore             = $false
 $useCurveOptimizer                       = $false
 $useIntelVoltageAdjustment               = $false
 $limitForCoValues                        = 50
+$voltageValueForNotTestedCores           = 0
 $defaultVoltageIncrementValues           = @{ 'AMD' = 1; 'INTEL' = 5 }
 $voltageStartingValues                   = @()
 $voltageCurrentValues                    = @()
@@ -808,13 +809,25 @@ incrementBy = Default
 
 
 # Set only the currently tested core to the selected Curve Optimizer / voltage offset value
-# All the other cores will be set to 0, resp. the determined maximum value if it's higher than 0
+# All the other cores will be set to 0, resp. the value from "voltageValueForNotTestedCores",
+# or the determined maximum value if it's higher than any of those
 # This should prevent errors caused by other cores than the currently tested one, or at least diminish the chance for that
 #
 # Note: Currently this only has an effect for Ryzen processors, for Intel up to 14th gen there is only one voltage value
 #
 # Default: 0
 setVoltageOnlyForTestedCore = 0
+
+
+# If setVoltageOnlyForTestedCore above is enabled, you can define which Curve Optimizer / voltage offset value you want the other,
+# currently not tested cores to be set to
+#
+# Note: If the "current value" for a core is higher than what is entered here, e.g. derived from the "startValues" setting or
+# from errors during testing that caused an automatic adjustment, the higher value for this core will take priority over this setting
+# to avoid instabilities
+#
+# Default: 0
+voltageValueForNotTestedCores = 0
 
 
 # Repeat the test on a core if it has thrown an error and the Curve Optimizer / voltage offset value was increased
@@ -5476,6 +5489,7 @@ function Initialize-AutomaticTestMode {
     $Script:useAutomaticTestMode           = $true
     $Script:useAutomaticTestModeWithResume = ($settings.AutomaticTestMode.enableResumeAfterUnexpectedExit -gt 0)
     $Script:setVoltageOnlyForTestedCore    = ($settings.AutomaticTestMode.setVoltageOnlyForTestedCore -gt 0)
+    $Script:voltageValueForNotTestedCores  = $settings.AutomaticTestMode.voltageValueForNotTestedCores
 
 
     if ($useAutomaticTestModeWithResume) {
@@ -5709,7 +5723,7 @@ function Set-CurveOptimizerValues {
         }
 
 
-        # If we only want to set the currently tested core, set the others to max(0, currentvalue)
+        # If we only want to set the currently tested core, set the others to max($voltageValueForNotTestedCores, currentvalue)
         if ($setVoltageOnlyForTestedCore) {
             Write-DebugText('The flag to only set the voltage for the currently tested core is enabled')
             Write-DebugText('Currently tested core: ' + $Script:currentlyTestedCore)
@@ -5728,7 +5742,7 @@ function Set-CurveOptimizerValues {
                 }
                 else {
                     # We may have allowed higher values than 0
-                    $voltageValuesToUse += [Math]::Max(0, $voltageCurrentValues[$i])
+                    $voltageValuesToUse += [Math]::Max($voltageValueForNotTestedCores, $voltageCurrentValues[$i])
                 }
             }
 
@@ -7623,6 +7637,13 @@ function Initialize-Prime95 {
     # No PrimeNet functionality, just stress testing
     [Void] $output2.Add('StressTester=1')
     [Void] $output2.Add('UsePrimenet=0')
+
+
+    # This might enable more strict error checking
+    # Or maybe it is already enabled automatically when doing a torture test with StressTester=1
+    [Void] $output2.Add('ErrorCheck=1')
+    [Void] $output2.Add('SumInputsErrorCheck=1')
+
 
     #[Void] $output2.Add('WGUID_version=2')                   # The algorithm used to generate the Windows GUID. Not important
     #[Void] $output2.Add('WorkPreference=0')                  # This seems to be a PrimeNet only setting
@@ -13062,6 +13083,7 @@ try {
 
         if ($useCurveOptimizer -and $setVoltageOnlyForTestedCore) {
             Write-SettingIntroText -Text 'Set voltage only for the tested core' -Setting ('ENABLED')
+            Write-SettingIntroText -Text 'The voltage for the untested cores'   -Setting ($voltageValueForNotTestedCores)
         }
 
         if ($useIntelVoltageAdjustment) {
